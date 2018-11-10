@@ -1,0 +1,10 @@
+package rules;
+
+import knowledgeevents.*;
+
+rule "E2"
+ when
+  cir : Circle() || square : Square()
+ then	
+  System.out.println("--- Rule [ E-2 ] ---");
+ end

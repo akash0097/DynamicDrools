@@ -1,0 +1,149 @@
+/*
+ * Copyright 2010 Red Hat, Inc. and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.solver;
+    dialect "java"
+
+import org.optaplanner.core.api.score.buildin.bendable.BendableScoreHolder;
+
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.Allocation;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.ExecutionMode;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.Job;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.JobType;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.Project;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.ResourceRequirement;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.domain.resource.Resource;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.solver.score.capacity.NonrenewableResourceCapacityTracker;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.solver.score.capacity.RenewableResourceCapacityTracker;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.solver.score.capacity.ResourceCapacityTracker;
+import com.optebiz.factogrids95.factoplan.optebiz_factogrids95_factoplan_services.projectjobscheduling.solver.score.drools.RenewableResourceUsedDay;
+
+global BendableScoreHolder scoreHolder;
+
+// ############################################################################
+// Hard constraints
+// ############################################################################
+
+rule "nonrenewableResourceCapacity"
+    when
+        $resource : Resource(renewable == false, $capacity : capacity)
+        accumulate(
+            ResourceRequirement(resource == $resource,
+                    $executionMode : executionMode,
+                    $requirement : requirement)
+            and Allocation(executionMode == $executionMode);
+            $used : sum($requirement);
+            $used > $capacity
+        )
+    then
+        scoreHolder.addHardConstraintMatch(kcontext, 0, $capacity - $used);
+end
+
+rule "renewableResourceUsedDay"
+       salience 1 // Do these rules first (optional, for performance)
+	when
+        ResourceRequirement(resourceRenewable == true, $executionMode : executionMode, $resource : resource)
+        Allocation(executionMode == $executionMode,
+                $startDate : startDate, $endDate : endDate)
+    then
+        for (int i = $startDate; i < $endDate; i++) {
+            insertLogical(new RenewableResourceUsedDay($resource, i));
+        }
+end
+
+rule "renewableResourceCapacity"
+    when
+        RenewableResourceUsedDay($resource : resource, $capacity : resourceCapacity, $usedDay : usedDay)
+        accumulate(
+            ResourceRequirement(resource == $resource,
+                    $executionMode : executionMode,
+                    $requirement : requirement)
+            and Allocation(executionMode == $executionMode, $usedDay >= startDate, $usedDay < endDate);
+            $used : sum($requirement);
+            $used > $capacity
+         )
+    then
+          scoreHolder.addHardConstraintMatch(kcontext, 0, $capacity - $used);
+          //System.out.println("Resource  capacity 1 rule");
+end
+
+// ############################################################################
+// Soft constraints
+// ############################################################################
+
+rule "minimizeSetupTime"
+	when 
+		Allocation(setupRequired == 0)
+	then
+		//System.out.println("minimize Setup time");
+		scoreHolder.addSoftConstraintMatch(kcontext, 0, 1);
+end	
+
+rule "priority"
+	when
+		$executionMode : ExecutionMode(priority == 1)
+		Allocation(executionMode == $executionMode)
+	then
+		scoreHolder.addSoftConstraintMatch(kcontext, 0, 1);
+		//System.out.println("Priority 1 rule");	
+end
+
+rule "lockmachinetoworkorder"
+	salience 2 // Do these rules first (optional, for performance)
+	when
+		$project: Project(workOrderNumber == "15488467New.mm")
+		$resource : Resource(machine != "Press1")
+		ResourceRequirement($resource == resource , $executionMode:executionMode)
+		Allocation(executionMode == $executionMode, project == $project)	
+	then
+		scoreHolder.addHardConstraintMatch(kcontext, 0, -1000);	
+		//System.out.println("lockmachinetoworkorder rule");	
+end	
+
+rule "capacityTracker"
+	when
+		$resource : Resource(renewable == false, $capacity: capacity, $startUnavailableTime:startUnavailableTime, $endUnavailableTime:endUnavailableTime)
+		ResourceRequirement(resource == $resource,
+		$executionMode : executionMode,
+		$requirement : requirement)
+		and Allocation(executionMode == $executionMode , $startDate : startDate, $endDate : endDate,
+		(($startUnavailableTime-$endDate)<0 && ($startDate-$endUnavailableTime)<0 ))
+	then
+		scoreHolder.addHardConstraintMatch(kcontext, 0, ($startUnavailableTime - $endDate+$startDate-$endUnavailableTime));	
+		//System.out.println("capacityTracker rule");	
+end		
+
+rule "totalProjectDelay"
+    when
+        Allocation(jobType == JobType.SINK, endDate != null, $endDate : endDate,
+               $criticalPathEndDate : projectCriticalPathEndDate)
+    then
+        scoreHolder.addSoftConstraintMatch(kcontext, 0,  $criticalPathEndDate - $endDate);
+end
+
+
+rule "totalMakespan"
+    when
+        accumulate(
+            Allocation(jobType == JobType.SINK, $endDate : endDate);
+            $maxProjectEndDate : max($endDate)
+        )
+    then
+        scoreHolder.addSoftConstraintMatch(kcontext, 1, - (Integer) $maxProjectEndDate);
+end
+
+
+	

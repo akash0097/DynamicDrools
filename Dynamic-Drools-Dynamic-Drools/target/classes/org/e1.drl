@@ -1,0 +1,38 @@
+package rules;
+
+import knowledgeevents.*;
+
+rule "E1"
+ when
+  cir : Circle() || square : Square()
+ then	
+  System.out.println("--- Rule [ E-1 ] ---");
+ end
+ 
+ rule "E2"
+ when
+  cir : Circle() || square : Square()
+ then	
+  System.out.println("--- Rule [ E-1 ] ---");
+ end
+ 
+ rule "E3"
+ when
+  cir : Circle() || square : Square()
+ then	
+  System.out.println("--- Rule [ E-1 ] ---");
+ end
+ 
+ rule "E4"
+ when
+  cir : Circle() || square : Square()
+ then	
+  System.out.println("--- Rule [ E-1 ] ---");
+ end
+ 
+ rule "E5"
+ when
+  cir : Circle() || square : Square()
+ then	
+  System.out.println("--- Rule [ E-5 ] ---");
+ end
